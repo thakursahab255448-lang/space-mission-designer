@@ -14,6 +14,31 @@ export type MissionPhase =
 
 export type CameraViewMode = 'chase' | 'orbital' | 'cockpit' | 'inspect';
 
+export type SimulationControlMode = 'astronaut_eva' | 'spacecraft_flight';
+
+export interface AstronautEVAState {
+  x: number;
+  y: number;
+  z: number;
+  vx: number;
+  vy: number;
+  vz: number;
+  headingRad: number;
+  isGrounded: boolean;
+  jetpackActive: boolean;
+  sprinting: boolean;
+  inRover: boolean;
+  roverX: number;
+  roverZ: number;
+  roverHeadingRad: number;
+  suitOxygenPct: number;
+  suitBatteryPct: number;
+  samplesCarried: number;
+  flagsPlanted: number;
+  nearInteractableLabel: string | null;
+  nearInteractableType: 'rocket' | 'habitat' | 'rover' | 'sample' | 'flag' | null;
+}
+
 export interface MissionModeConfig {
   id: MissionModeId;
   name: string;

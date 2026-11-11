@@ -1,18 +1,22 @@
 import React, { useState } from 'react';
 import {
+  AstronautEVAState,
   CameraViewMode,
   ComputedCraftSpecs,
   DifficultyLevel,
   MissionChallenge,
   MissionChallengeOption,
   MissionModeConfig,
+  SimulationControlMode,
   SpacecraftConfiguration,
   TelemetryState,
 } from '../game/types';
 import {
   ENGINE_CATALOG,
+  HABITAT_BASE_POS,
   LAUNCH_WINDOWS,
   PAYLOAD_CATALOG,
+  PLANETARY_GRAVITY_MS2,
   POWER_SYSTEM_CATALOG,
   ROCKET_CHASSIS_CATALOG,
   TRAJECTORY_OPTIONS,
@@ -23,6 +27,8 @@ interface HudOverlayProps {
   mode: MissionModeConfig;
   difficulty: DifficultyLevel;
   telemetry: TelemetryState;
+  simMode: SimulationControlMode;
+  astronautState: AstronautEVAState;
   config: SpacecraftConfiguration;
   specs: ComputedCraftSpecs;
   cameraView: CameraViewMode;
@@ -33,6 +39,11 @@ interface HudOverlayProps {
   activeBurn: boolean;
   shieldActive: boolean;
   scanning: boolean;
+  onToggleSimMode: (target?: SimulationControlMode) => void;
+  onVirtualMove: (dx: number, dz: number) => void;
+  onVirtualJetpack: (active: boolean) => void;
+  onTriggerEvaInteract: () => void;
+  onTriggerRoverToggle: () => void;
   onUpdateConfig: (partial: Partial<SpacecraftConfiguration>) => void;
   onInitiateLaunch: () => void;
   onToggleBurn: () => void;
@@ -53,6 +64,8 @@ interface HudOverlayProps {
 export const HudOverlay: React.FC<HudOverlayProps> = ({
   mode,
   telemetry,
+  simMode,
+  astronautState,
   config,
   specs,
   cameraView,
@@ -63,6 +76,11 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
   activeBurn,
   shieldActive,
   scanning,
+  onToggleSimMode,
+  onVirtualMove,
+  onVirtualJetpack,
+  onTriggerEvaInteract,
+  onTriggerRoverToggle,
   onUpdateConfig,
   onInitiateLaunch,
   onToggleBurn,
@@ -85,8 +103,9 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
 
   const readiness = validateMissionReadiness(specs);
   const isAssembly = telemetry.phase === 'assembly';
+  const isEva = simMode === 'astronaut_eva';
+  const gravity = PLANETARY_GRAVITY_MS2[mode.id] || 1.62;
 
-  // Discrete 5-pip socket state helper for Hull Health
   const renderVitalityPips = (pct: number, accentHex: string) => {
     const pips = [20, 40, 60, 80, 100];
     return (
@@ -111,9 +130,9 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
 
   return (
     <div className="fixed inset-0 z-10 pointer-events-none flex flex-col justify-between p-3 md:p-5">
-      {/* TOP PERIMETER ROW: Left Vitality & Status Cluster | Center Phase Stepper | Right Telemetry & Utility Buttons */}
+      {/* TOP PERIMETER ROW */}
       <div className="w-full flex flex-wrap items-start justify-between gap-3">
-        {/* Top-Left Cluster: Mission Status, Hull Vitality Pips, Crew Safety, Fuel & O2/Power */}
+        {/* Top-Left Cluster */}
         <div
           className="pointer-events-auto bg-[#0B0E17]/92 border border-slate-800 rounded px-3.5 py-2.5 flex flex-col gap-2 min-w-[270px] max-w-[340px]"
           style={{ boxShadow: '0 6px 20px rgba(0,0,0,0.65)' }}
@@ -121,7 +140,12 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
           <div className="flex items-center justify-between gap-2 border-b border-slate-800/90 pb-1.5">
             <div className="flex items-center gap-2 min-w-0">
               <svg viewBox="0 0 24 24" className="w-4 h-4 shrink-0" aria-hidden="true">
-                <polygon points="12,2 21,19 12,15 3,19" fill="#22D3EE" stroke="#083344" strokeWidth="1.5" />
+                <polygon
+                  points="12,2 21,19 12,15 3,19"
+                  fill="#22D3EE"
+                  stroke="#083344"
+                  strokeWidth="1.5"
+                />
               </svg>
               <span className="text-xs font-display font-bold tracking-wider uppercase text-slate-100 truncate">
                 {mode.name}
@@ -132,7 +156,6 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
             </span>
           </div>
 
-          {/* Primary Vitality & Propellant Readouts */}
           <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs font-mono tabular-nums">
             <div>
               <div className="flex justify-between text-[10px] text-slate-400">
@@ -151,62 +174,107 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
                   {Math.round(telemetry.crewSafetyPct)}%
                 </span>
               </div>
-              <div className="mt-0.5">{renderVitalityPips(telemetry.crewSafetyPct, '#10B981')}</div>
+              <div className="mt-0.5">
+                {renderVitalityPips(telemetry.crewSafetyPct, '#10B981')}
+              </div>
             </div>
 
-            {/* Fuel Bar */}
             <div>
               <div className="flex justify-between text-[10px] text-slate-400">
-                <span>PROPELLANT</span>
-                <span
-                  className={
-                    telemetry.fuelPct < 25
-                      ? 'text-amber-400 font-semibold'
-                      : 'text-cyan-300 font-semibold'
-                  }
-                >
-                  {Math.round(telemetry.fuelPct)}%
+                <span>{isEva ? 'SUIT BATTERY' : 'PROPELLANT'}</span>
+                <span className="text-cyan-300 font-semibold">
+                  {Math.round(isEva ? astronautState.suitBatteryPct : telemetry.fuelPct)}%
                 </span>
               </div>
               <div className="w-full h-2 bg-slate-900 rounded overflow-hidden border border-slate-800 mt-0.5">
                 <div
                   className="h-full bg-cyan-400 transition-all duration-150"
-                  style={{ width: `${Math.round(telemetry.fuelPct)}%` }}
+                  style={{
+                    width: `${Math.round(
+                      isEva ? astronautState.suitBatteryPct : telemetry.fuelPct
+                    )}%`,
+                  }}
                 />
               </div>
             </div>
 
-            {/* Oxygen & Power Bar */}
             <div>
-              <div className="flex justify-between text-[10px] text-slate-400">
-                <span>O₂ / POWER</span>
+              <div className="flex justify-between text-[10px] text-slate-400 whitespace-nowrap">
+                <span>{isEva ? 'SUIT O₂ / SAMPLES' : 'O₂ / POWER'}</span>
                 <span className="text-slate-200 font-semibold">
-                  {Math.round(telemetry.oxygenPct)}% · {Math.round(telemetry.powerPct)}%
+                  {isEva
+                    ? `${Math.round(astronautState.suitOxygenPct)}% · ${astronautState.samplesCarried}x`
+                    : `${Math.round(telemetry.oxygenPct)}% · ${Math.round(telemetry.powerPct)}%`}
                 </span>
               </div>
               <div className="w-full h-2 bg-slate-900 rounded overflow-hidden border border-slate-800 mt-0.5 flex">
                 <div
                   className="h-full bg-emerald-400 transition-all duration-150"
-                  style={{ width: `${Math.round(telemetry.oxygenPct * 0.5)}%` }}
+                  style={{
+                    width: `${Math.round(
+                      (isEva ? astronautState.suitOxygenPct : telemetry.oxygenPct) * 0.5
+                    )}%`,
+                  }}
                 />
                 <div
                   className="h-full bg-amber-400 transition-all duration-150"
-                  style={{ width: `${Math.round(telemetry.powerPct * 0.5)}%` }}
+                  style={{
+                    width: `${Math.round(
+                      (isEva ? astronautState.suitBatteryPct : telemetry.powerPct) * 0.5
+                    )}%`,
+                  }}
                 />
               </div>
             </div>
           </div>
 
-          {/* Live Status Line */}
           <div className="text-[11px] font-mono text-slate-300 truncate pt-0.5 border-t border-slate-800/80">
-            {telemetry.statusText}
+            {isEva
+              ? astronautState.inRover
+                ? 'ROVER DRIVE MODE · WASD Steer · [G] Exit on Foot'
+                : `ASTRONAUT EVA WALK (${gravity} m/s²) · WASD Walk · Space Jetpack`
+              : telemetry.statusText}
           </div>
         </div>
 
-        {/* Top-Center: Compact Mission Phase Stepper, Active Objective & Status Banner */}
-        <div className="pointer-events-auto hidden lg:flex flex-col items-center gap-1.5">
+        {/* Top-Center: Simulation Mode Switcher + Phase Stepper + Status Banner */}
+        <div className="pointer-events-auto flex flex-col items-center gap-1.5">
           <div
-            className="flex flex-col items-center bg-[#0B0E17]/90 border border-slate-800 rounded px-4 py-2 gap-1"
+            className="flex items-center gap-1.5 bg-[#0B0E17]/92 border border-slate-800 rounded p-1"
+            style={{ boxShadow: '0 6px 20px rgba(0,0,0,0.65)' }}
+          >
+            <button
+              type="button"
+              onClick={(e) => {
+                e.currentTarget.blur();
+                onToggleSimMode('astronaut_eva');
+              }}
+              className={`px-3 py-1.5 rounded text-xs font-display font-bold uppercase tracking-wider cursor-pointer transition-colors whitespace-nowrap ${
+                isEva
+                  ? 'bg-emerald-500 text-slate-950'
+                  : 'bg-[#111827] text-slate-300 hover:text-white'
+              }`}
+            >
+              Astronaut Walk (EVA) [V]
+            </button>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.currentTarget.blur();
+                onToggleSimMode('spacecraft_flight');
+              }}
+              className={`px-3 py-1.5 rounded text-xs font-display font-bold uppercase tracking-wider cursor-pointer transition-colors whitespace-nowrap ${
+                !isEva
+                  ? 'bg-cyan-500 text-slate-950'
+                  : 'bg-[#111827] text-slate-300 hover:text-white'
+              }`}
+            >
+              Spacecraft &amp; Launch [V]
+            </button>
+          </div>
+
+          <div
+            className="hidden lg:flex flex-col items-center bg-[#0B0E17]/90 border border-slate-800 rounded px-4 py-1.5 gap-0.5"
             style={{ boxShadow: '0 6px 20px rgba(0,0,0,0.65)' }}
           >
             <div className="flex items-center gap-2 text-[11px] font-mono">
@@ -215,7 +283,7 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
                   { id: 'assembly', label: '1. ASSEMBLY' },
                   { id: 'launch', label: '2. LAUNCH' },
                   { id: 'transit', label: '3. TRANSIT' },
-                  { id: 'objective', label: '4. OBJECTIVE' },
+                  { id: 'objective', label: '4. SURFACE / EVA' },
                 ] as const
               ).map((step, i) => {
                 const active =
@@ -240,19 +308,31 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
             <div className="text-xs font-mono text-slate-200">
               OBJECTIVE ({telemetry.objectivesCompleted}/{telemetry.totalObjectives}):{' '}
               <span className="text-cyan-300">
-                {mode.objectives[Math.min(mode.objectives.length - 1, telemetry.objectivesCompleted)]}
+                {
+                  mode.objectives[
+                    Math.min(mode.objectives.length - 1, telemetry.objectivesCompleted)
+                  ]
+                }
               </span>
             </div>
           </div>
 
-          {statusBanner && telemetry.phase !== 'countdown' && !activeChallenge && (
-            <div className="bg-[#0B0E17]/92 border border-cyan-500/50 rounded px-3.5 py-1 text-[11px] font-mono text-cyan-200 shadow-lg">
-              {statusBanner}
+          {(astronautState.nearInteractableLabel && isEva) ? (
+            <div className="bg-emerald-950/95 border border-emerald-400 rounded px-4 py-1 text-xs font-mono text-emerald-200 shadow-lg">
+              ● {astronautState.nearInteractableLabel}
             </div>
+          ) : (
+            statusBanner &&
+            telemetry.phase !== 'countdown' &&
+            !activeChallenge && (
+              <div className="bg-[#0B0E17]/92 border border-cyan-500/50 rounded px-3.5 py-1 text-[11px] font-mono text-cyan-200 shadow-lg">
+                {statusBanner}
+              </div>
+            )
           )}
         </div>
 
-        {/* Top-Right Cluster: Tabular-Nums Telemetry & Utility Icon Buttons */}
+        {/* Top-Right Cluster */}
         <div className="pointer-events-auto flex items-start gap-2">
           <div
             className="bg-[#0B0E17]/92 border border-slate-800 rounded px-3.5 py-2 grid grid-cols-2 sm:grid-cols-4 gap-3 text-right font-mono tabular-nums"
@@ -288,7 +368,6 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
             </div>
           </div>
 
-          {/* Compact Square SVG Utility Buttons */}
           <div className="flex items-center gap-1 bg-[#0B0E17]/92 border border-slate-800 rounded p-1">
             <button
               type="button"
@@ -301,7 +380,13 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
               }}
               className="w-8 h-8 flex items-center justify-center rounded bg-slate-900 hover:bg-slate-800 text-slate-200 cursor-pointer"
             >
-              <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2">
+              <svg
+                viewBox="0 0 24 24"
+                className="w-4 h-4"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+              >
                 <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" fill="#06B6D4" />
                 {muted ? (
                   <line x1="22" y1="9" x2="16" y2="15" stroke="#EF4444" />
@@ -386,7 +471,7 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
 
       {/* CENTER-VIEWPORT COUNTDOWN OR ACTIVE CHALLENGE DECISION CARD */}
       <div className="my-auto flex flex-col items-center justify-center pointer-events-none">
-        {telemetry.phase === 'countdown' && (
+        {telemetry.phase === 'countdown' && !isEva && (
           <div className="bg-[#0B0E17]/95 border-2 border-cyan-400 rounded-lg px-8 py-5 text-center shadow-2xl">
             <div className="text-xs font-mono text-cyan-300 uppercase tracking-widest">
               LAUNCH SEQUENCE INITIATED · PAD 39B
@@ -447,7 +532,6 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
       {/* UNIFIED COLLAPSIBLE BOTTOM MISSION CONTROL & ENGINEERING DOCK */}
       <div className="w-full flex flex-col items-center pointer-events-none">
         <div className="w-full max-w-[980px] flex flex-col items-center">
-          {/* Collapse / Expand Cinema Toggle Drawer Handle */}
           <button
             type="button"
             onClick={(e) => {
@@ -466,10 +550,156 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
               className="pointer-events-auto w-full bg-[#0B0E17]/95 border border-slate-700 rounded-lg p-3 shadow-2xl"
               style={{ boxShadow: '0 -8px 30px rgba(0,0,0,0.8)' }}
             >
-              {isAssembly ? (
+              {isEva ? (
+                /* =================================================================
+                   ASTRONAUT EVA WALK & ROVER SURFACE EXPLORATION CONTROL DECK
+                   ================================================================= */
+                <div className="flex flex-wrap lg:flex-nowrap items-center justify-between gap-3">
+                  {/* Left: Interactive Walk D-Pad Controls (WASD + Mouse/Touch Support) */}
+                  <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1 bg-[#111827] border border-slate-800 rounded p-1 shrink-0">
+                      <button
+                        type="button"
+                        aria-label="Walk Left [A]"
+                        onMouseDown={() => onVirtualMove(-1, 0)}
+                        onMouseUp={() => onVirtualMove(0, 0)}
+                        onMouseLeave={() => onVirtualMove(0, 0)}
+                        onClick={() => onVirtualMove(-1, 0)}
+                        className="px-2.5 py-1.5 rounded bg-slate-900 hover:bg-slate-800 active:bg-cyan-500 active:text-slate-950 text-xs font-mono font-bold text-slate-200 cursor-pointer whitespace-nowrap"
+                      >
+                        ◀ A
+                      </button>
+                      <button
+                        type="button"
+                        aria-label="Walk Forward [W]"
+                        onMouseDown={() => onVirtualMove(0, -1)}
+                        onMouseUp={() => onVirtualMove(0, 0)}
+                        onMouseLeave={() => onVirtualMove(0, 0)}
+                        onClick={() => onVirtualMove(0, -1)}
+                        className="px-2.5 py-1.5 rounded bg-slate-900 hover:bg-slate-800 active:bg-cyan-500 active:text-slate-950 text-xs font-mono font-bold text-slate-200 cursor-pointer whitespace-nowrap"
+                      >
+                        ▲ W
+                      </button>
+                      <button
+                        type="button"
+                        aria-label="Walk Backward [S]"
+                        onMouseDown={() => onVirtualMove(0, 1)}
+                        onMouseUp={() => onVirtualMove(0, 0)}
+                        onMouseLeave={() => onVirtualMove(0, 0)}
+                        onClick={() => onVirtualMove(0, 1)}
+                        className="px-2.5 py-1.5 rounded bg-slate-900 hover:bg-slate-800 active:bg-cyan-500 active:text-slate-950 text-xs font-mono font-bold text-slate-200 cursor-pointer whitespace-nowrap"
+                      >
+                        ▼ S
+                      </button>
+                      <button
+                        type="button"
+                        aria-label="Walk Right [D]"
+                        onMouseDown={() => onVirtualMove(1, 0)}
+                        onMouseUp={() => onVirtualMove(0, 0)}
+                        onMouseLeave={() => onVirtualMove(0, 0)}
+                        onClick={() => onVirtualMove(1, 0)}
+                        className="px-2.5 py-1.5 rounded bg-slate-900 hover:bg-slate-800 active:bg-cyan-500 active:text-slate-950 text-xs font-mono font-bold text-slate-200 cursor-pointer whitespace-nowrap"
+                      >
+                        D ▶
+                      </button>
+                    </div>
+
+                    <button
+                      type="button"
+                      onMouseDown={() => onVirtualJetpack(true)}
+                      onMouseUp={() => onVirtualJetpack(false)}
+                      onMouseLeave={() => onVirtualJetpack(false)}
+                      onClick={() => {
+                        onVirtualJetpack(true);
+                        setTimeout(() => onVirtualJetpack(false), 350);
+                      }}
+                      className={`px-3 py-2 rounded font-display font-semibold text-xs uppercase tracking-wider border cursor-pointer whitespace-nowrap ${
+                        astronautState.jetpackActive
+                          ? 'bg-cyan-500 text-slate-950 border-cyan-300'
+                          : 'bg-[#111827] text-cyan-300 border-slate-700 hover:border-cyan-400'
+                      }`}
+                    >
+                      Jetpack Boost [Space]
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.currentTarget.blur();
+                        onTriggerEvaInteract();
+                      }}
+                      className="px-3 py-2 rounded bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-display font-bold text-xs uppercase tracking-wider cursor-pointer whitespace-nowrap"
+                    >
+                      Collect / Plant Flag [E]
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.currentTarget.blur();
+                        onTriggerRoverToggle();
+                      }}
+                      className={`px-3 py-2 rounded font-display font-semibold text-xs uppercase tracking-wider border cursor-pointer whitespace-nowrap ${
+                        astronautState.inRover
+                          ? 'bg-amber-500 text-slate-950 border-amber-300'
+                          : 'bg-[#111827] text-amber-300 border-slate-700 hover:border-amber-400'
+                      }`}
+                    >
+                      {astronautState.inRover ? 'Exit Rover [G]' : 'Drive Rover [G]'}
+                    </button>
+                  </div>
+
+                  {/* Center/Right: Live Surface Coordinates, Radar & Complete/Board CTA */}
+                  <div className="flex items-center gap-3">
+                    <div className="hidden xl:flex items-center gap-3 text-xs font-mono tabular-nums text-slate-400 whitespace-nowrap">
+                      <span>
+                        POS:{' '}
+                        <strong className="text-slate-100">
+                          ({astronautState.x.toFixed(1)}m, {astronautState.z.toFixed(1)}m)
+                        </strong>
+                      </span>
+                      <span>
+                        HABITAT:{' '}
+                        <strong className="text-emerald-400">
+                          {Math.round(
+                            Math.hypot(
+                              astronautState.x - HABITAT_BASE_POS.x,
+                              astronautState.z - HABITAT_BASE_POS.z
+                            )
+                          )}
+                          m
+                        </strong>
+                      </span>
+                    </div>
+
+                    {telemetry.phase === 'objective' ? (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.currentTarget.blur();
+                          onAdvancePhaseOrComplete();
+                        }}
+                        className="px-4 py-2 rounded bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-display font-bold text-xs uppercase tracking-wider cursor-pointer whitespace-nowrap"
+                      >
+                        Complete Mission &amp; Return →
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.currentTarget.blur();
+                          onToggleSimMode('spacecraft_flight');
+                        }}
+                        className="px-4 py-2 rounded bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-display font-bold text-xs uppercase tracking-wider cursor-pointer whitespace-nowrap"
+                      >
+                        Board Rocket &amp; Launch →
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ) : isAssembly ? (
                 /* ASSEMBLY & PRE-LAUNCH SPACECRAFT ENGINEERING DOCK */
                 <div className="flex flex-col gap-3">
-                  {/* Top Engineering Bar: Tabs + Live Tsiolkovsky Delta-V Readout */}
                   <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-2">
                     <div className="flex items-center gap-1.5">
                       {(
@@ -494,7 +724,6 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
                       ))}
                     </div>
 
-                    {/* Real-time Engineering Equation Metrics */}
                     <div className="flex flex-wrap items-center gap-4 text-xs font-mono tabular-nums">
                       <span>
                         CRAFT Δv:{' '}
@@ -540,7 +769,6 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
                     </div>
                   </div>
 
-                  {/* Tab 1: Rocket Chassis & Engine Selection + Fuel Load */}
                   {builderTab === 'propulsion' && (
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
                       <div>
@@ -609,7 +837,6 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
                     </div>
                   )}
 
-                  {/* Tab 2: Power System, Payload Module & Shield Reinforcement */}
                   {builderTab === 'systems' && (
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
                       <div>
@@ -680,7 +907,6 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
                     </div>
                   )}
 
-                  {/* Tab 3: Launch Window & Orbital Trajectory */}
                   {builderTab === 'trajectory' && (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
                       <div>
@@ -727,7 +953,6 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
                     </div>
                   )}
 
-                  {/* Bottom Readiness & Launch CTA Row */}
                   <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-800">
                     <div className="text-xs font-mono">
                       {readiness.blockers.length > 0 ? (
@@ -741,25 +966,38 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
                       )}
                     </div>
 
-                    <button
-                      type="button"
-                      disabled={!readiness.canLaunch}
-                      onClick={(e) => {
-                        e.currentTarget.blur();
-                        onInitiateLaunch();
-                      }}
-                      className={`px-6 py-2.5 rounded font-display font-bold text-xs tracking-wider uppercase transition-colors whitespace-nowrap ${
-                        readiness.canLaunch
-                          ? 'bg-cyan-500 hover:bg-cyan-400 text-slate-950 cursor-pointer shadow-[0_0_20px_rgba(6,182,212,0.35)]'
-                          : 'bg-slate-800 text-slate-500 cursor-not-allowed'
-                      }`}
-                    >
-                      Launch Rocket (Countdown)
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.currentTarget.blur();
+                          onToggleSimMode('astronaut_eva');
+                        }}
+                        className="px-4 py-2.5 rounded bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-400 text-emerald-300 font-display font-bold text-xs tracking-wider uppercase cursor-pointer whitespace-nowrap"
+                      >
+                        Walk Astronaut on Pad [V]
+                      </button>
+
+                      <button
+                        type="button"
+                        disabled={!readiness.canLaunch}
+                        onClick={(e) => {
+                          e.currentTarget.blur();
+                          onInitiateLaunch();
+                        }}
+                        className={`px-6 py-2.5 rounded font-display font-bold text-xs tracking-wider uppercase transition-colors whitespace-nowrap ${
+                          readiness.canLaunch
+                            ? 'bg-cyan-500 hover:bg-cyan-400 text-slate-950 cursor-pointer shadow-[0_0_20px_rgba(6,182,212,0.35)]'
+                            : 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                        }`}
+                      >
+                        Launch Rocket (Countdown)
+                      </button>
+                    </div>
                   </div>
                 </div>
               ) : (
-                /* ACTIVE FLIGHT & SURFACE EXPLORATION CONTROL DECK (Compact Single-Row Layout) */
+                /* ACTIVE FLIGHT CONTROL DECK */
                 <div className="flex flex-wrap lg:flex-nowrap items-center justify-between gap-2">
                   <div className="flex flex-wrap lg:flex-nowrap items-center gap-2">
                     <button
@@ -811,6 +1049,17 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
                       type="button"
                       onClick={(e) => {
                         e.currentTarget.blur();
+                        onToggleSimMode('astronaut_eva');
+                      }}
+                      className="px-3 py-2 rounded bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-400 text-emerald-300 font-display font-semibold text-xs uppercase cursor-pointer whitespace-nowrap shrink-0"
+                    >
+                      Deploy Astronaut EVA [V]
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.currentTarget.blur();
                         onTriggerChallenge();
                       }}
                       className="px-3 py-2 rounded bg-[#111827] hover:bg-slate-800 border border-slate-700 text-slate-300 font-mono text-xs cursor-pointer whitespace-nowrap shrink-0"
@@ -819,14 +1068,15 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
                     </button>
                   </div>
 
-                  {/* Right Flight Telemetry & Phase Advance Action */}
                   <div className="flex items-center gap-3 shrink-0">
                     <div className="hidden xl:flex items-center gap-3 text-xs font-mono tabular-nums text-slate-400 whitespace-nowrap">
                       <span>
-                        VEL: <strong className="text-slate-100">{telemetry.velocityKms} km/s</strong>
+                        VEL:{' '}
+                        <strong className="text-slate-100">{telemetry.velocityKms} km/s</strong>
                       </span>
                       <span>
-                        NODES: <strong className="text-cyan-300">{telemetry.waypointsCollected}</strong>
+                        NODES:{' '}
+                        <strong className="text-cyan-300">{telemetry.waypointsCollected}</strong>
                       </span>
                     </div>
 

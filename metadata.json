@@ -2,5 +2,7 @@
   "name": "Space Mission Designer: Beyond the Universe",
   "description": "An interactive 3D space mission simulation and aerospace engineering strategy game inspired by NASA exploration missions.",
   "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }

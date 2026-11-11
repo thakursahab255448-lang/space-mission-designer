@@ -5,7 +5,10 @@ import {
   calculateHohmannTransfer,
   calculateMissionScore,
   calculateTsiolkovskyDeltaV,
+  createInitialAstronautState,
+  HABITAT_BASE_POS,
   resolveMissionChallenge,
+  stepAstronautSimulation,
   stepMissionTelemetry,
   validateMissionReadiness,
 } from './rules';
@@ -169,3 +172,40 @@ test('stepMissionTelemetry transitions phases and calculateMissionScore awards b
   assert.ok(score.unlockedBadges.includes('tsiolkovsky_master'));
   assert.ok(score.unlockedBadges.includes('zero_harm_director'));
 });
+
+test('stepAstronautSimulation updates astronaut walking, jetpack flight, and habitat recharge', () => {
+  let astro = createInitialAstronautState();
+  const startX = astro.x;
+
+  // Walk right (+X) and jetpack up
+  astro = stepAstronautSimulation(astro, 0.5, 'moon', {
+    moveX: 1,
+    moveZ: 0,
+    jumpOrJetpack: true,
+    sprint: true,
+  });
+
+  assert.ok(astro.x > startX);
+  assert.ok(astro.y > 0);
+  assert.equal(astro.isGrounded, false);
+  assert.equal(astro.jetpackActive, true);
+  assert.ok(astro.suitBatteryPct < 100);
+
+  // Move to Habitat Base and verify O2 & Battery recharge
+  astro.x = HABITAT_BASE_POS.x + 1;
+  astro.z = HABITAT_BASE_POS.z + 1;
+  astro.suitOxygenPct = 60;
+  astro.suitBatteryPct = 50;
+
+  astro = stepAstronautSimulation(astro, 1.0, 'moon', {
+    moveX: 0,
+    moveZ: 0,
+    jumpOrJetpack: false,
+    sprint: false,
+  });
+
+  assert.ok(astro.suitOxygenPct > 60);
+  assert.ok(astro.suitBatteryPct > 50);
+});
+
+

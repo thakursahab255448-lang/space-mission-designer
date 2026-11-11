@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AchievementBadge,
+  AstronautEVAState,
   CameraViewMode,
   DifficultyLevel,
   GameState,
@@ -14,12 +15,14 @@ import {
   MissionChallengeOption,
   MissionModeId,
   MissionScoreBreakdown,
+  SimulationControlMode,
   SpacecraftConfiguration,
   TelemetryState,
 } from './game/types';
 import {
   calculateCraftSpecs,
   calculateMissionScore,
+  createInitialAstronautState,
   INITIAL_BADGES,
   MISSION_CHALLENGES,
   MISSION_MODES,
@@ -100,7 +103,7 @@ function createInitialTelemetry(
   const mode = MISSION_MODES.find((m) => m.id === modeId) || MISSION_MODES[0];
   return {
     phase: 'assembly',
-    statusText: 'PRE-LAUNCH ASSEMBLY · Configure Vehicle & Verify Delta-V Readiness',
+    statusText: 'PRE-LAUNCH ASSEMBLY · Walk Astronaut [WASD] or Configure Rocket Launch',
     fuelPct: 100,
     healthPct: 100,
     crewSafetyPct: 100,
@@ -140,6 +143,20 @@ export default function App() {
     DEFAULT_CONFIG_BY_MODE.moon
   );
 
+  // Default to astronaut_eva so the player immediately sees and controls the 3D Astronaut walking around!
+  const [simMode, setSimMode] = useState<SimulationControlMode>('astronaut_eva');
+  const [astronautState, setAstronautState] = useState<AstronautEVAState>(() =>
+    createInitialAstronautState()
+  );
+  const [virtualInput, setVirtualInput] = useState({
+    moveX: 0,
+    moveZ: 0,
+    jetpack: false,
+    sprint: false,
+    interactTrigger: 0,
+    roverToggleTrigger: 0,
+  });
+
   const specs = useMemo(
     () => calculateCraftSpecs(config, selectedMode, selectedDifficulty),
     [config, selectedMode, selectedDifficulty]
@@ -162,7 +179,9 @@ export default function App() {
 
   const [activeChallenge, setActiveChallenge] =
     useState<MissionChallenge | null>(null);
-  const [statusBanner, setStatusBanner] = useState<string | null>(null);
+  const [statusBanner, setStatusBanner] = useState<string | null>(
+    'ASTRONAUT EVA SIMULATION · Walk with WASD / Arrows, Jetpack [Space], Collect Samples [E], or Drive Rover [G]'
+  );
 
   const [activeBurn, setActiveBurn] = useState(false);
   const [shieldActive, setShieldActive] = useState(false);
@@ -170,14 +189,12 @@ export default function App() {
   const steerThrustRef = useRef(false);
   const challengeShownForRunRef = useRef(false);
 
-  // Persistent Player Progress (Badges, Leaderboard, Best Score, Director Name)
   const [directorName, setDirectorName] = useState('Director Alex Vance');
   const [bestScore, setBestScore] = useState(0);
   const [badges, setBadges] = useState<AchievementBadge[]>(INITIAL_BADGES);
   const [leaderboard, setLeaderboard] =
     useState<LeaderboardEntry[]>(SEED_LEADERBOARD);
 
-  // Load saved progress from localStorage
   useEffect(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY_SAVE);
@@ -226,7 +243,6 @@ export default function App() {
     []
   );
 
-  // Sync document.body.dataset.state for Ultra Mode verification
   useEffect(() => {
     document.body.dataset.state = gameState;
   }, [gameState]);
@@ -269,12 +285,34 @@ export default function App() {
     const nextSpecs = calculateCraftSpecs(config, selectedMode, selectedDifficulty);
     const fresh = createInitialTelemetry(selectedMode, nextSpecs.budgetRemainingM);
     setTelemetry(fresh);
+    setAstronautState(createInitialAstronautState());
+    setSimMode('astronaut_eva');
     setActiveChallenge(null);
-    setStatusBanner('SPACECRAFT ASSEMBLY READY · Review Subsystems or Launch Rocket');
+    setStatusBanner(
+      'ASTRONAUT EVA SIMULATION · Walk [WASD/Arrows], Jetpack [Space], Collect Samples [E], Drive Rover [G], or Board Rocket [V]'
+    );
     challengeShownForRunRef.current = false;
     setDockCollapsed(false);
     setGameState('playing');
   }, [config, selectedMode, selectedDifficulty]);
+
+  const handleToggleSimMode = useCallback((target?: SimulationControlMode) => {
+    soundEngine.playUiClick();
+    setSimMode((prev) => {
+      const next =
+        target || (prev === 'astronaut_eva' ? 'spacecraft_flight' : 'astronaut_eva');
+      if (next === 'astronaut_eva') {
+        setStatusBanner(
+          'ASTRONAUT EVA WALK ACTIVE · Move with WASD / Arrows, Jetpack [Space], Collect Samples [E], Rover [G]'
+        );
+      } else {
+        setStatusBanner(
+          'SPACECRAFT CONTROL ACTIVE · Configure Rocket Subsystems & Initiate Countdown Launch'
+        );
+      }
+      return next;
+    });
+  }, []);
 
   const finishMission = useCallback(
     (finalTel: TelemetryState) => {
@@ -334,7 +372,6 @@ export default function App() {
     ]
   );
 
-  // Simulation Telemetry Tick (every 200ms while playing)
   useEffect(() => {
     if (gameState !== 'playing' || learningOpen || achievementsOpen || activeChallenge) {
       return;
@@ -364,11 +401,19 @@ export default function App() {
           } else if (next.phase === 'launch') {
             soundEngine.playCountdownBeep(true);
             soundEngine.playLaunchRumble();
-            setStatusBanner('LIFTOFF ACHIEVED · Steer with WASD / Arrows to Collect Telemetry & Evade Debris');
+            setStatusBanner(
+              'LIFTOFF ACHIEVED · Steer with WASD / Arrows to Collect Telemetry & Evade Debris'
+            );
           }
         }
 
-        // Trigger a random mission challenge around 48-55% transit progress once per run
+        if (prev.phase === 'transit' && next.phase === 'objective') {
+          setSimMode('astronaut_eva');
+          setStatusBanner(
+            'SURFACE TOUCHDOWN · Walk Astronaut [WASD] to Collect Samples [E] & Drive Rover [G]!'
+          );
+        }
+
         if (
           !challengeShownForRunRef.current &&
           next.phase === 'transit' &&
@@ -384,7 +429,6 @@ export default function App() {
           soundEngine.playHazardTelegraph();
         }
 
-        // Check win or defeat conditions
         if (next.phase === 'complete') {
           setTimeout(() => finishMission(next), 50);
         } else if (
@@ -436,6 +480,7 @@ export default function App() {
 
   const handleInitiateLaunch = useCallback(() => {
     soundEngine.playCountdownBeep(false);
+    setSimMode('spacecraft_flight');
     setTelemetry((prev) => ({
       ...prev,
       phase: 'countdown',
@@ -470,13 +515,17 @@ export default function App() {
         };
       }
       if (prev.phase === 'transit') {
+        setSimMode('astronaut_eva');
+        setStatusBanner(
+          'SURFACE TOUCHDOWN · Walk Astronaut [WASD] to Collect Samples [E] & Drive Rover [G]!'
+        );
         return {
           ...prev,
           phase: 'objective',
           progressPct: Math.max(prev.progressPct, 75),
           objectivesCompleted: 3,
           fuelPct: Math.max(8, prev.fuelPct - 6),
-          statusText: 'TARGET ARRIVAL · Executing Surface / Orbital Science Operations',
+          statusText: 'SURFACE EVA OPERATIONS · Walk Astronaut & Extract Core Samples',
         };
       }
       if (prev.phase === 'objective') {
@@ -515,8 +564,12 @@ export default function App() {
       ...prev,
       scienceDataPoints: prev.scienceDataPoints + bonusPoints,
       waypointsCollected: prev.waypointsCollected + 1,
+      progressPct:
+        prev.phase === 'assembly'
+          ? Math.min(25, prev.progressPct + 6)
+          : Math.min(100, prev.progressPct + 5),
     }));
-    setStatusBanner(`+125 SCIENCE TELEMETRY · Collected ${label}`);
+    setStatusBanner(`+${bonusPoints} SCIENCE TELEMETRY · ${label}`);
   }, []);
 
   const handleHazardCollision = useCallback(
@@ -554,7 +607,6 @@ export default function App() {
     setMuted(nextMuted);
   }, []);
 
-  // Global Keyboard Shortcuts
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (['INPUT', 'TEXTAREA', 'SELECT'].includes((e.target as HTMLElement)?.tagName)) {
@@ -593,6 +645,8 @@ export default function App() {
       if (gameState === 'playing') {
         if (e.code === 'KeyP') {
           setGameState('paused');
+        } else if (e.code === 'KeyV') {
+          handleToggleSimMode();
         } else if (e.code === 'KeyC') {
           handleCycleCamera();
         } else if (e.code === 'KeyH') {
@@ -603,7 +657,7 @@ export default function App() {
           setLearningOpen((v) => !v);
         } else if (e.code === 'KeyB') {
           setAchievementsOpen((v) => !v);
-        } else if (e.code === 'KeyE') {
+        } else if (e.code === 'KeyE' && simMode === 'spacecraft_flight') {
           setShieldActive((v) => !v);
           soundEngine.playUiClick();
         } else if (e.code === 'KeyF') {
@@ -621,9 +675,11 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [
     gameState,
+    simMode,
     learningOpen,
     achievementsOpen,
     handleStartMission,
+    handleToggleSimMode,
     handleCycleCamera,
     handleToggleMute,
   ]);
@@ -635,6 +691,8 @@ export default function App() {
     const preset = DEFAULT_CONFIG_BY_MODE[nextMode];
     const nextSpecs = calculateCraftSpecs(preset, nextMode, selectedDifficulty);
     setTelemetry(createInitialTelemetry(nextMode, nextSpecs.budgetRemainingM));
+    setAstronautState(createInitialAstronautState());
+    setSimMode('astronaut_eva');
     setGameState('playing');
   }, [selectedMode, selectedDifficulty, handleSelectMode]);
 
@@ -645,17 +703,21 @@ export default function App() {
         gameState={gameState}
         modeId={selectedMode}
         phase={telemetry.phase}
+        simMode={simMode}
         cameraView={cameraView}
         config={config}
         progressPct={telemetry.progressPct}
         activeBurn={activeBurn}
         shieldActive={shieldActive}
         scanning={scanning}
+        virtualInput={virtualInput}
         onCollectWaypoint={handleCollectWaypoint}
         onHazardCollision={handleHazardCollision}
         onSteerActivity={(isThrusting) => {
           steerThrustRef.current = isThrusting;
         }}
+        onAstronautStateUpdate={setAstronautState}
+        onBoardRocketFromEVA={() => handleToggleSimMode('spacecraft_flight')}
       />
 
       {/* Title Screen State */}
@@ -671,12 +733,14 @@ export default function App() {
         />
       )}
 
-      {/* Active Playing HUD & Collapsible Bottom Engineering Dock */}
+      {/* Active Playing HUD & Collapsible Bottom Engineering / Astronaut EVA Dock */}
       {(gameState === 'playing' || gameState === 'paused') && (
         <HudOverlay
           mode={activeModeConfig}
           difficulty={selectedDifficulty}
           telemetry={telemetry}
+          simMode={simMode}
+          astronautState={astronautState}
           config={config}
           specs={specs}
           cameraView={cameraView}
@@ -687,6 +751,25 @@ export default function App() {
           activeBurn={activeBurn}
           shieldActive={shieldActive}
           scanning={scanning}
+          onToggleSimMode={handleToggleSimMode}
+          onVirtualMove={(dx, dz) =>
+            setVirtualInput((prev) => ({ ...prev, moveX: dx, moveZ: dz }))
+          }
+          onVirtualJetpack={(active) =>
+            setVirtualInput((prev) => ({ ...prev, jetpack: active }))
+          }
+          onTriggerEvaInteract={() =>
+            setVirtualInput((prev) => ({
+              ...prev,
+              interactTrigger: prev.interactTrigger + 1,
+            }))
+          }
+          onTriggerRoverToggle={() =>
+            setVirtualInput((prev) => ({
+              ...prev,
+              roverToggleTrigger: prev.roverToggleTrigger + 1,
+            }))
+          }
           onUpdateConfig={handleUpdateConfig}
           onInitiateLaunch={handleInitiateLaunch}
           onToggleBurn={() => {

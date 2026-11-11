@@ -1,5 +1,6 @@
 import {
   AchievementBadge,
+  AstronautEVAState,
   ComputedCraftSpecs,
   DifficultyLevel,
   EngineModule,
@@ -19,6 +20,140 @@ import {
 } from './types';
 
 export const STANDARD_GRAVITY = 9.80665; // m/s^2
+
+export const PLANETARY_GRAVITY_MS2: Record<MissionModeId, number> = {
+  moon: 1.62,
+  mars: 3.71,
+  satellite: 0.45, // Microgravity EVA tether walk
+  deepspace: 1.31, // Europa surface gravity
+  rescue: 0.65, // Low-G orbital rescue EVA
+};
+
+export const HABITAT_BASE_POS = { x: -11, z: -7 };
+
+export function createInitialAstronautState(): AstronautEVAState {
+  return {
+    x: 4.2,
+    y: 0,
+    z: 6.5,
+    vx: 0,
+    vy: 0,
+    vz: 0,
+    headingRad: 0,
+    isGrounded: true,
+    jetpackActive: false,
+    sprinting: false,
+    inRover: false,
+    roverX: 10.5,
+    roverZ: -4.5,
+    roverHeadingRad: -0.4,
+    suitOxygenPct: 100,
+    suitBatteryPct: 100,
+    samplesCarried: 0,
+    flagsPlanted: 0,
+    nearInteractableLabel: null,
+    nearInteractableType: null,
+  };
+}
+
+/**
+ * Pure deterministic physics and life-support step for the 3D Astronaut / Rover on the surface.
+ */
+export function stepAstronautSimulation(
+  state: AstronautEVAState,
+  dtSeconds: number,
+  modeId: MissionModeId,
+  input: {
+    moveX: number; // -1 (left/A) to +1 (right/D)
+    moveZ: number; // -1 (forward/W) to +1 (backward/S)
+    jumpOrJetpack: boolean;
+    sprint: boolean;
+  }
+): AstronautEVAState {
+  if (dtSeconds <= 0) return state;
+
+  const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
+  const next: AstronautEVAState = { ...state };
+  const gravity = PLANETARY_GRAVITY_MS2[modeId] || 1.62;
+
+  const topSpeed = next.inRover ? 13.5 : input.sprint ? 8.2 : 5.2;
+  const len = Math.hypot(input.moveX, input.moveZ);
+  const normX = len > 0 ? input.moveX / len : 0;
+  const normZ = len > 0 ? input.moveZ / len : 0;
+
+  const targetVx = normX * topSpeed;
+  const targetVz = normZ * topSpeed;
+  const accel = next.isGrounded ? 10.0 : 5.5;
+  const blend = Math.min(1, accel * dtSeconds);
+
+  next.vx = next.vx + (targetVx - next.vx) * blend;
+  next.vz = next.vz + (targetVz - next.vz) * blend;
+
+  if (len > 0.05) {
+    next.headingRad = Math.atan2(normX, normZ);
+  }
+
+  // Vertical jump & jetpack thrust physics
+  if (input.jumpOrJetpack && next.suitBatteryPct > 1 && !next.inRover) {
+    next.jetpackActive = true;
+    const jetpackThrust = Math.max(gravity + 4.8, 7.2);
+    next.vy = clamp(next.vy + (jetpackThrust - gravity) * dtSeconds, -12, 8.5);
+    next.isGrounded = false;
+  } else {
+    next.jetpackActive = false;
+    next.vy -= gravity * 2.2 * dtSeconds;
+  }
+
+  next.x += next.vx * dtSeconds;
+  next.z += next.vz * dtSeconds;
+  next.y += next.vy * dtSeconds;
+
+  if (next.y <= 0) {
+    next.y = 0;
+    next.vy = 0;
+    next.isGrounded = true;
+  } else if (next.y > 14) {
+    next.y = 14;
+    next.vy = 0;
+  }
+
+  // Keep inside natural boulder perimeter (radius 22m) and avoid walking inside solid rocket core
+  const radialDist = Math.hypot(next.x, next.z);
+  if (radialDist > 21.5) {
+    const scale = 21.5 / radialDist;
+    next.x *= scale;
+    next.z *= scale;
+  }
+  if (radialDist < 2.3 && next.y < 6) {
+    const pushAngle = Math.atan2(next.z || 0.1, next.x || 0.1);
+    next.x = Math.cos(pushAngle) * 2.35;
+    next.z = Math.sin(pushAngle) * 2.35;
+  }
+
+  if (next.inRover) {
+    next.roverX = next.x;
+    next.roverZ = next.z;
+    next.roverHeadingRad = next.headingRad;
+  }
+
+  // Habitat dome proximity recharges suit O2 & Battery; otherwise slow EVA drain
+  const distToHabitat = Math.hypot(
+    next.x - HABITAT_BASE_POS.x,
+    next.z - HABITAT_BASE_POS.z
+  );
+  if (distToHabitat < 4.8) {
+    next.suitOxygenPct = clamp(next.suitOxygenPct + dtSeconds * 12, 0, 100);
+    next.suitBatteryPct = clamp(next.suitBatteryPct + dtSeconds * 15, 0, 100);
+  } else {
+    const o2Drain = (input.sprint ? 0.45 : 0.22) * (next.inRover ? 0.35 : 1.0);
+    const batDrain = next.jetpackActive ? 2.4 : next.inRover ? 0.65 : 0.18;
+    next.suitOxygenPct = clamp(next.suitOxygenPct - dtSeconds * o2Drain, 0, 100);
+    next.suitBatteryPct = clamp(next.suitBatteryPct - dtSeconds * batDrain, 0, 100);
+  }
+
+  next.sprinting = input.sprint;
+  return next;
+}
 
 export const DIFFICULTY_SETTINGS: Record<
   DifficultyLevel,
